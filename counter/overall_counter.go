@@ -108,3 +108,19 @@ func (b *ByTTL) Add() {
 
 	b.TotalKeys += 1
 }
+
+func countWithTTL(_ string, ttl time.Duration) {
+	overallCounter.TotalKeys += 1
+	theOne := overallCounter.FindByTTL(ttl)
+	if theOne != nil {
+		theOne.Add()
+	}
+}
+
+func SetTotalMemory(memory int64) {
+	overallCounter.TotalMemory = memory
+}
+
+func SetUsedMemory(memory int64) {
+	overallCounter.UsedMemory = memory
+}
