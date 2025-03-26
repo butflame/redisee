@@ -2,6 +2,7 @@ package counter
 
 import (
 	"redisee/config"
+	"sync"
 	"unicode"
 )
 
@@ -11,6 +12,7 @@ var (
 		Children: make(map[string]*PrefixNode),
 	}
 	givenSeparator map[string]bool = nil
+	prefixMutex    sync.Mutex
 )
 
 func GetPrefixCounter() PrefixNode {
@@ -26,6 +28,9 @@ type PrefixNode struct {
 }
 
 func countWithPrefix(key string, memoryUsed int64) {
+	prefixMutex.Lock()
+	defer prefixMutex.Unlock()
+
 	var visiting *PrefixNode = prefixCounter
 	for {
 		prefix, suffix := splitKey(key)

@@ -3,6 +3,7 @@ package counter
 import (
 	"container/heap"
 	"sort"
+	"sync"
 )
 
 type KeyNode struct {
@@ -11,7 +12,10 @@ type KeyNode struct {
 	MemoryUsage int64
 }
 
-var bigKeyCounter = NewBigKeyCounter(500)
+var (
+	bigKeyCounter = NewBigKeyCounter(500)
+	bigKeyMutex   sync.Mutex
+)
 
 func GetBigKeyCounter() BigKeyCounter {
 	return *bigKeyCounter
@@ -52,6 +56,9 @@ func NewBigKeyCounter(maxSize int) *BigKeyCounter {
 
 // AddKey 向计数器中添加一个新的 key
 func (c *BigKeyCounter) AddKey(key string, keyType string, memoryUsage int64) {
+	bigKeyMutex.Lock()
+	defer bigKeyMutex.Unlock()
+
 	if len(c.TopKeys) < c.MaxSize {
 		heap.Push(c, KeyNode{
 			Key:         key,
@@ -74,6 +81,9 @@ func countBigKey(key string, keyType string, memoryUsage int64) {
 
 // GetTopKeys 获取使用内存最大的 500 个 key
 func (c *BigKeyCounter) GetTopKeys() []KeyNode {
+	bigKeyMutex.Lock()
+	defer bigKeyMutex.Unlock()
+
 	result := make([]KeyNode, len(c.TopKeys))
 	copy(result, c.TopKeys)
 	sort.Slice(result, func(i, j int) bool {

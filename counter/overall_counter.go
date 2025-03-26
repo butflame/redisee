@@ -68,9 +68,13 @@ var (
 			},
 		},
 	}
+	overallMutex sync.Mutex
 )
 
 func GetOverallCounter() OverallCounter {
+	overallMutex.Lock()
+	defer overallMutex.Unlock()
+
 	return overallCounter
 }
 
@@ -91,7 +95,6 @@ func (c *OverallCounter) FindByTTL(d time.Duration) (ret *ByTTL) {
 }
 
 type ByTTL struct {
-	mutex     sync.Mutex
 	Desc      string
 	minTTL    time.Duration
 	maxTTL    time.Duration
@@ -103,24 +106,16 @@ func (b *ByTTL) Match(ttl time.Duration) bool {
 }
 
 func (b *ByTTL) Add() {
-	b.mutex.Lock()
-	defer b.mutex.Unlock()
-
 	b.TotalKeys += 1
 }
 
 func countWithTTL(_ string, ttl time.Duration) {
+	overallMutex.Lock()
+	defer overallMutex.Unlock()
+
 	overallCounter.TotalKeys += 1
 	theOne := overallCounter.FindByTTL(ttl)
 	if theOne != nil {
 		theOne.Add()
 	}
-}
-
-func SetTotalMemory(memory int64) {
-	overallCounter.TotalMemory = memory
-}
-
-func SetUsedMemory(memory int64) {
-	overallCounter.UsedMemory = memory
 }
