@@ -26,6 +26,7 @@ func main() {
 	}
 	if len(flag.Args()) == 0 {
 		fmt.Println("Start with all default setting, you can run with \"-h\" to see available flags")
+		fmt.Println("")
 	}
 	ctx := context.Background()
 	instance.Run(ctx)
