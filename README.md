@@ -45,7 +45,7 @@ All available flags are as follows:
 | -host | 127.0.0.1 | the host of the redis server |
 | -port | 6379 | the port of the redis server |
 | -password |  | password to do authorization |
-| -db | all | specify the db to scan |
+| -db | -1 | specify the db to scan, scan all dbs by default (-1) |
 | -pattern | * | the pattern to use with `scan` command |
 | -seq | any non-numeric and non-alphabetic character  | seperators to determine the prefix of key, **every character** of this flag value would be used as seperator. |
 | -concurrency | 4 | concurrency when executing `ttl` and `memory usage` for keys. |
