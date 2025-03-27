@@ -14,9 +14,15 @@ import (
 
 var allKeyTypes = []string{"string", "hash", "list", "set", "zset"}
 
+type dbToScan struct {
+	dbIndex  int
+	keyCount int
+	client   *redis.Client
+}
+
 type Scanner struct {
 	wg          sync.WaitGroup
-	dbClients   []*redis.Client
+	dbs         []dbToScan
 	finishChan  chan struct{}
 	scanJobChan chan scanJob
 }
@@ -37,21 +43,31 @@ type scanJob struct {
 }
 
 func (s *Scanner) setupClients(ctx context.Context) {
-	var defaultClient *redis.Client
-	if config.Config.Db == config.ALL_DB {
-		defaultClient = redis.NewClient(&redis.Options{
-			Addr:     config.Config.Host + ":" + strconv.Itoa(config.Config.Port),
-			Password: config.Config.Password,
-			DB:       0,
-		})
-		infoMap, err := defaultClient.InfoMap(ctx).Result()
+	defaultClient := redis.NewClient(&redis.Options{
+		Addr:     config.Config.Host + ":" + strconv.Itoa(config.Config.Port),
+		Password: config.Config.Password,
+		DB:       0,
+	})
+	defer defaultClient.Close()
+
+	// check if memory usage is available
+	_, err := defaultClient.MemoryUsage(ctx, "").Result()
+	if err != nil && redis.Nil != err {
+		panic(err)
+	}
+	infoMap, err := defaultClient.InfoMap(ctx).Result()
+	if err != nil {
+		panic(err)
+	}
+	keySpaceMap := infoMap["Keyspace"]
+	numberRe := regexp.MustCompile(`\d+`)
+	for dbKey, dbInfo := range keySpaceMap {
+		dbIndex, err := strconv.Atoi(numberRe.FindString(dbKey))
 		if err != nil {
 			panic(err)
 		}
-		keySpaceMap := infoMap["Keyspace"]
-		numberRe := regexp.MustCompile(`\d+`)
-		for dbKey := range keySpaceMap {
-			dbIndex, err := strconv.Atoi(numberRe.FindString(dbKey))
+		if config.Config.Db == config.ALL_DB || dbIndex == config.Config.Db {
+			keyCount, err := strconv.Atoi(numberRe.FindString(dbInfo))
 			if err != nil {
 				panic(err)
 			}
@@ -61,28 +77,23 @@ func (s *Scanner) setupClients(ctx context.Context) {
 				Password: config.Config.Password,
 				DB:       dbIndex,
 			})
-			s.dbClients = append(s.dbClients, client)
+			s.dbs = append(s.dbs, dbToScan{
+				dbIndex:  dbIndex,
+				keyCount: keyCount,
+				client:   client,
+			})
 		}
-	} else {
-		defaultClient = redis.NewClient(&redis.Options{
-			Addr:     config.Config.Host + ":" + strconv.Itoa(config.Config.Port),
-			Password: config.Config.Password,
-			DB:       config.Config.Db,
-		})
-		s.dbClients = append(s.dbClients, defaultClient)
 	}
-	// check if memory usage is available
-	_, err := defaultClient.MemoryUsage(ctx, "").Result()
-	if err != nil && redis.Nil != err {
-		panic(err)
+	if len(s.dbs) == 0 {
+		panic("the db you specified has no keys")
 	}
 }
 
 func (s *Scanner) setOverallStats(ctx context.Context) {
-	if len(s.dbClients) == 0 {
+	if len(s.dbs) == 0 {
 		panic("no db clients, make sure you have setup clients")
 	}
-	client := s.dbClients[0]
+	client := s.dbs[0].client
 	infoMap, err := client.InfoMap(ctx).Result()
 	if err != nil {
 		panic(err)
@@ -109,8 +120,17 @@ func (s *Scanner) startScanWorker(ctx context.Context) {
 		for i, key := range job.keys {
 			ttlCmd := cmds[i*2]
 			memoryUsageCmd := cmds[i*2+1]
-			if ttlCmd.Err() != nil || memoryUsageCmd.Err() != nil {
-				fmt.Printf("error getting ttl or memory usage for key %s: ttlError: %v, memoryUsageError: %v\n", key, ttlCmd.Err(), memoryUsageCmd.Err())
+			if ttlCmd.Err() != nil {
+				if redis.Nil == ttlCmd.Err() {
+					continue
+				}
+				fmt.Printf("error getting ttl for key %s: %v\n", key, ttlCmd.Err())
+			}
+			if memoryUsageCmd.Err() != nil {
+				if redis.Nil == memoryUsageCmd.Err() {
+					continue
+				}
+				fmt.Printf("error getting memory usage for key %s: %v\n", key, memoryUsageCmd.Err())
 			}
 			ttl := ttlCmd.(*redis.DurationCmd).Val()
 			memoryUsage := memoryUsageCmd.(*redis.IntCmd).Val()
@@ -122,11 +142,14 @@ func (s *Scanner) startScanWorker(ctx context.Context) {
 
 func (s *Scanner) Run(ctx context.Context) {
 	s.setupClients(ctx)
+	fmt.Printf("Scanning %d db(s), %d concurrency, scan pattern: %s\n", len(s.dbs), config.Config.Concurrency, config.Config.ScanPattern)
 	s.setOverallStats(ctx)
 	for i := 0; i < config.Config.Concurrency; i++ {
 		go s.startScanWorker(ctx)
 	}
-	for _, client := range s.dbClients {
+	for _, db := range s.dbs {
+		client := db.client
+		totalScanned := 0
 		for _, keyType := range allKeyTypes {
 			var cursor uint64 = 0
 			for {
@@ -134,9 +157,9 @@ func (s *Scanner) Run(ctx context.Context) {
 				if err != nil {
 					panic(err)
 				}
-				// Split keys into groups of at most 50 keys each
-				for i := 0; i < len(keys); i += 50 {
-					end := min(i+50, len(keys))
+				// Split keys into groups of at most 100 keys each
+				for i := 0; i < len(keys); i += 100 {
+					end := min(i+100, len(keys))
 					group := keys[i:end]
 
 					s.scanJobChan <- scanJob{
@@ -146,18 +169,25 @@ func (s *Scanner) Run(ctx context.Context) {
 					}
 				}
 				cursor = nextCursor
+				totalScanned += len(keys)
+				// 使用 \r 回到行首并覆盖上一行内容
+				if totalScanned > 0 {
+					fmt.Printf("\rScanning db %d, keys %d/%d scanned", db.dbIndex, totalScanned, db.keyCount)
+				}
 				if cursor == 0 {
 					break
 				}
 			}
 		}
+		fmt.Println()
 	}
 	close(s.scanJobChan)
 	s.wg.Wait()
 
+	defer fmt.Printf("Finished scanning all dbs\n\n\n")
 	defer func() {
-		for _, client := range s.dbClients {
-			client.Close()
+		for _, db := range s.dbs {
+			db.client.Close()
 		}
 	}()
 	defer close(s.finishChan)

@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"redisee/config"
+	"strconv"
 )
 
 func main() {
@@ -24,10 +25,23 @@ func main() {
 		flag.PrintDefaults()
 		return
 	}
-	if len(flag.Args()) == 0 {
-		fmt.Println("Start with all default setting, you can run with \"-h\" to see available flags")
-		fmt.Println("")
+
+	fmt.Println("Start with setting:")
+	fmt.Printf("Host: %s\n", config.Config.Host)
+	fmt.Printf("Port: %d\n", config.Config.Port)
+	fmt.Printf("Password: %s\n", config.Config.Password)
+	dbRepr := strconv.Itoa(config.Config.Db)
+	if config.Config.Db == config.ALL_DB {
+		dbRepr = "All"
 	}
+	fmt.Printf("Db: %s\n", dbRepr)
+	fmt.Printf("Separator: %s\n", config.Config.Separator)
+	fmt.Printf("Scan pattern: %s\n", config.Config.ScanPattern)
+	fmt.Printf("Concurrency: %d\n", config.Config.Concurrency)
+	fmt.Println()
+	fmt.Println("you can run with \"-h\" to see available flags")
+	fmt.Println()
+
 	ctx := context.Background()
 	instance.Run(ctx)
 }

@@ -4,20 +4,47 @@ import (
 	"context"
 	"math/rand"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 )
+
+type insertFunc func(redis.Pipeliner)
+
+const insertBatch = 300
 
 func main() {
 	ctx := context.Background()
 
 	c := redis.NewClient(&redis.Options{
 		Addr: "localhost:6379",
-		DB:   0,
+		DB:   5,
 	})
 
-	for i := 0; i < 20000; i++ {
+	insertChan := make(chan insertFunc, 10000)
+	var wg sync.WaitGroup
+
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			group := []insertFunc{}
+			for f := range insertChan {
+				group = append(group, f)
+				if len(group) == insertBatch {
+					p := c.Pipeline()
+					for _, f := range group {
+						f(p)
+					}
+					p.Exec(ctx)
+					group = []insertFunc{}
+				}
+			}
+			wg.Done()
+		}()
+	}
+
+	for i := 0; i < rand.Intn(200000)+20000; i++ {
 		randomNum := rand.Intn(9000000000) + 1000000000 // 生成10位随机数
 		// 定义可能的前缀段
 		var prefixes = []string{
@@ -51,13 +78,16 @@ func main() {
 		expiration := rand.Intn(60*60*24*7) + 600
 
 		// 写入Redis
-		err := c.Set(ctx, key, value, time.Duration(expiration)*time.Second).Err()
-		if err != nil {
-			panic(err)
+		insertChan <- func(p redis.Pipeliner) {
+			p.Set(ctx, key, value, time.Duration(expiration)*time.Second)
 		}
+		// err := c.Set(ctx, key, value, time.Duration(expiration)*time.Second).Err()
+		// if err != nil {
+		// 	panic(err)
+		// }
 	}
 	// 插入500个zset类型的key
-	for i := 0; i < 5000; i++ {
+	for i := 0; i < rand.Intn(500000)+5000; i++ {
 		randomNum := rand.Intn(9000000000) + 1000000000 // 生成10位随机数
 		// 定义十种不同的前缀
 		var prefixes = []string{
@@ -94,21 +124,27 @@ func main() {
 		}
 
 		// 写入Redis ZSet
-		err := c.ZAdd(ctx, key, members...).Err()
-		if err != nil {
-			panic(err)
+		insertChan <- func(p redis.Pipeliner) {
+			p.ZAdd(ctx, key, members...)
 		}
+		// err := c.ZAdd(ctx, key, members...).Err()
+		// if err != nil {
+		// 	panic(err)
+		// }
 
 		// 生成600 - 3600秒的随机过期时间
 		expiration := rand.Intn(60*60*24*7) + 600
-		err = c.Expire(ctx, key, time.Duration(expiration)*time.Second).Err()
-		if err != nil {
-			panic(err)
+		insertChan <- func(p redis.Pipeliner) {
+			p.Expire(ctx, key, time.Duration(expiration)*time.Second)
 		}
+		// err = c.Expire(ctx, key, time.Duration(expiration)*time.Second).Err()
+		// if err != nil {
+		// 	panic(err)
+		// }
 	}
 
 	// 插入800个set类型的key
-	for i := 0; i < 8000; i++ {
+	for i := 0; i < rand.Intn(80000)+8000; i++ {
 		randomNum := rand.Intn(9000000000) + 1000000000 // 生成10位随机数
 		// 定义十种不同的前缀
 		var prefixes = []string{
@@ -141,20 +177,26 @@ func main() {
 		}
 
 		// 写入Redis Set
-		err := c.SAdd(ctx, key, members...).Err()
-		if err != nil {
-			panic(err)
+		insertChan <- func(p redis.Pipeliner) {
+			p.SAdd(ctx, key, members...)
 		}
+		// err := c.SAdd(ctx, key, members...).Err()
+		// if err != nil {
+		// 	panic(err)
+		// }
 
 		// 生成600 - 3600秒的随机过期时间
 		expiration := rand.Intn(60*60*24*7) + 600
-		err = c.Expire(ctx, key, time.Duration(expiration)*time.Second).Err()
-		if err != nil {
-			panic(err)
+		insertChan <- func(p redis.Pipeliner) {
+			p.Expire(ctx, key, time.Duration(expiration)*time.Second)
 		}
+		// err = c.Expire(ctx, key, time.Duration(expiration)*time.Second).Err()
+		// if err != nil {
+		// 	panic(err)
+		// }
 	}
 	// 插入1200个hash类型的key
-	for i := 0; i < 6000; i++ {
+	for i := 0; i < rand.Intn(60000)+6000; i++ {
 		randomNum := rand.Intn(9000000000) + 1000000000 // 生成10位随机数
 		// 定义十种不同的前缀
 		var prefixes = []string{
@@ -200,20 +242,26 @@ func main() {
 		}
 
 		// 写入Redis Hash
-		err := c.HSet(ctx, key, fields).Err()
-		if err != nil {
-			panic(err)
+		insertChan <- func(p redis.Pipeliner) {
+			p.HSet(ctx, key, fields)
 		}
+		// err := c.HSet(ctx, key, fields).Err()
+		// if err != nil {
+		// 	panic(err)
+		// }
 
 		// 生成600 - 3600秒的随机过期时间
 		expiration := rand.Intn(60*60*24*7) + 600
-		err = c.Expire(ctx, key, time.Duration(expiration)*time.Second).Err()
-		if err != nil {
-			panic(err)
+		insertChan <- func(p redis.Pipeliner) {
+			p.Expire(ctx, key, time.Duration(expiration)*time.Second)
 		}
+		// err = c.Expire(ctx, key, time.Duration(expiration)*time.Second).Err()
+		// if err != nil {
+		// 	panic(err)
+		// }
 	}
 	// 插入700个list类型的key
-	for i := 0; i < 6000; i++ {
+	for i := 0; i < rand.Intn(60000)+6000; i++ {
 		randomNum := rand.Intn(9000000000) + 1000000000 // 生成10位随机数
 
 		// 定义五种不同的前缀
@@ -252,16 +300,24 @@ func main() {
 		}
 
 		// 写入Redis List
-		err := c.RPush(ctx, key, members...).Err()
-		if err != nil {
-			panic(err)
+		insertChan <- func(p redis.Pipeliner) {
+			p.RPush(ctx, key, members...)
 		}
+		// err := c.RPush(ctx, key, members...).Err()
+		// if err != nil {
+		// 	panic(err)
+		// }
 
 		// 生成600 - 3600秒的随机过期时间
 		expiration := rand.Intn(60*60*24*7) + 600
-		err = c.Expire(ctx, key, time.Duration(expiration)*time.Second).Err()
-		if err != nil {
-			panic(err)
+		insertChan <- func(p redis.Pipeliner) {
+			p.Expire(ctx, key, time.Duration(expiration)*time.Second)
 		}
+		// err = c.Expire(ctx, key, time.Duration(expiration)*time.Second).Err()
+		// if err != nil {
+		// 	panic(err)
+		// }
 	}
+	close(insertChan)
+	wg.Wait()
 }
