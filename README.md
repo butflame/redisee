@@ -18,8 +18,12 @@ wget {binary file source link} -O redisee
 | linux | arm | https://github.com/butflame/redisee/releases/download/v1.0.0/redisee_linux_arm |
 | linux | arm64 | https://github.com/butflame/redisee/releases/download/v1.0.0/redisee_linux_arm64 |
 
-If you are using Windows, you can find the binary file in the release page.
+After downloading, you can make it executable by the following command:
+```bash
+chmod +x redisee
+```
 
+If you are using Windows, you can find the binary file in the release page.
 If you are using other OS or Arch, you can build it yourself.
 
 # Usage
