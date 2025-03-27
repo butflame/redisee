@@ -9,3 +9,5 @@ GOOS=linux GOARCH=arm64 go build -o bin/redisee_linux_arm64 .
 
 GOOS=windows GOARCH=amd64 go build -o bin/redisee_windows_amd64.exe .
 GOOS=windows GOARCH=386 go build -o bin/redisee_windows_386.exe .
+
+chmod +x bin/*
