@@ -106,7 +106,6 @@ func (s *Scanner) setOverallStats(ctx context.Context) {
 }
 
 func (s *Scanner) startScanWorker(ctx context.Context) {
-	s.wg.Add(1)
 	for job := range s.scanJobChan {
 		pipeline := job.dbClient.Pipeline()
 		for _, key := range job.keys {
@@ -145,6 +144,7 @@ func (s *Scanner) Run(ctx context.Context) {
 	fmt.Printf("Scanning %d db(s), %d concurrency, scan pattern: %s\n", len(s.dbs), config.Config.Concurrency, config.Config.ScanPattern)
 	s.setOverallStats(ctx)
 	for i := 0; i < config.Config.Concurrency; i++ {
+		s.wg.Add(1)
 		go s.startScanWorker(ctx)
 	}
 	for _, db := range s.dbs {
