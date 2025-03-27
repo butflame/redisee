@@ -12,8 +12,6 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-var allKeyTypes = []string{"string", "hash", "list", "set", "zset"}
-
 type dbToScan struct {
 	dbIndex  int
 	keyCount int
@@ -38,7 +36,6 @@ func New() *Scanner {
 
 type scanJob struct {
 	dbClient *redis.Client
-	keyType  string
 	keys     []string
 }
 
@@ -109,6 +106,7 @@ func (s *Scanner) startScanWorker(ctx context.Context) {
 	for job := range s.scanJobChan {
 		pipeline := job.dbClient.Pipeline()
 		for _, key := range job.keys {
+			pipeline.Type(ctx, key)
 			pipeline.TTL(ctx, key)
 			pipeline.MemoryUsage(ctx, key)
 		}
@@ -117,8 +115,15 @@ func (s *Scanner) startScanWorker(ctx context.Context) {
 			panic(err)
 		}
 		for i, key := range job.keys {
-			ttlCmd := cmds[i*2]
-			memoryUsageCmd := cmds[i*2+1]
+			typeCmd := cmds[i*3]
+			ttlCmd := cmds[i*3+1]
+			memoryUsageCmd := cmds[i*3+2]
+			if typeCmd.Err() != nil {
+				if redis.Nil == typeCmd.Err() {
+					continue
+				}
+				fmt.Printf("error getting type for key %s: %v\n", key, typeCmd.Err())
+			}
 			if ttlCmd.Err() != nil {
 				if redis.Nil == ttlCmd.Err() {
 					continue
@@ -131,9 +136,11 @@ func (s *Scanner) startScanWorker(ctx context.Context) {
 				}
 				fmt.Printf("error getting memory usage for key %s: %v\n", key, memoryUsageCmd.Err())
 			}
+			keyType := typeCmd.(*redis.StatusCmd).Val()
 			ttl := ttlCmd.(*redis.DurationCmd).Val()
 			memoryUsage := memoryUsageCmd.(*redis.IntCmd).Val()
-			counter.AddKey(key, job.keyType, ttl, memoryUsage)
+
+			counter.AddKey(key, keyType, ttl, memoryUsage)
 		}
 	}
 	s.wg.Done()
@@ -150,33 +157,31 @@ func (s *Scanner) Run(ctx context.Context) {
 	for _, db := range s.dbs {
 		client := db.client
 		totalScanned := 0
-		for _, keyType := range allKeyTypes {
-			var cursor uint64 = 0
-			for {
-				keys, nextCursor, err := client.ScanType(ctx, cursor, config.Config.ScanPattern, 1000, keyType).Result()
-				if err != nil {
-					panic(err)
-				}
-				// Split keys into groups of at most 100 keys each
-				for i := 0; i < len(keys); i += 100 {
-					end := min(i+100, len(keys))
-					group := keys[i:end]
 
-					s.scanJobChan <- scanJob{
-						dbClient: client,
-						keyType:  keyType,
-						keys:     group,
-					}
+		var cursor uint64 = 0
+		for {
+			keys, nextCursor, err := client.Scan(ctx, cursor, config.Config.ScanPattern, 1000).Result()
+			if err != nil {
+				panic(err)
+			}
+			// Split keys into groups of at most 100 keys each
+			for i := 0; i < len(keys); i += 100 {
+				end := min(i+100, len(keys))
+				group := keys[i:end]
+
+				s.scanJobChan <- scanJob{
+					dbClient: client,
+					keys:     group,
 				}
-				cursor = nextCursor
-				totalScanned += len(keys)
-				// 使用 \r 回到行首并覆盖上一行内容
-				if totalScanned > 0 {
-					fmt.Printf("\rScanning db %d, keys %d/%d scanned", db.dbIndex, totalScanned, db.keyCount)
-				}
-				if cursor == 0 {
-					break
-				}
+			}
+			cursor = nextCursor
+			totalScanned += len(keys)
+			// 使用 \r 回到行首并覆盖上一行内容
+			if totalScanned > 0 {
+				fmt.Printf("\rScanning db %d, keys %d/%d scanned", db.dbIndex, totalScanned, db.keyCount)
+			}
+			if cursor == 0 {
+				break
 			}
 		}
 		fmt.Println()
